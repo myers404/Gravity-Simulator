@@ -1,0 +1,554 @@
+<html>
+<head>
+	<title>N-Body Simulation using Barnes–Hut Algorithm</title>
+	<style type="text/css">
+		body{
+			margin: 0;
+			background-color: #F5F5F5;
+		}
+		.box {
+			padding: 10px;
+			margin: 10px;
+			background-color: white;
+			display: inline-block;
+		}
+		canvas{
+			background-color: #333333;
+		}
+
+		#controls div {
+			margin-bottom: 4px;
+		}
+
+		.row{
+			width: 1500px;
+			overflow: hidden;
+		}
+
+		.row .col {
+			float: left;
+		}
+	</style>
+</head>
+<body>
+
+	<div class="row">
+		<div class="col">
+			<div id="simulation" class="box">
+				<canvas id="stage" width="800px" height="800px"></canvas>
+			</div>
+		</div>
+		<div class="col">
+			<div id="controls" class="box">
+				<div>
+					<label>
+						<input type="checkbox" id="show_bnt"> Show Tree?
+					</label>
+				</div>
+
+				<div>
+					<label>
+						<input type="checkbox" id="pause_bnt"> Pause?
+					</label>
+				</div>
+
+				<div>
+					<label>
+						<input type="checkbox" id="draw_points" checked="checked"> Draw as Points?
+					</label>
+				</div>
+
+				<div>
+					<label>
+						<input type="checkbox" id="use_collision" checked="checked"> Use Collisions?
+					</label>
+				</div>
+
+				<div>
+					<input type="text" id="num_bodies" value="100">
+					<button id="start_bnt">Start</button>
+				</div>
+
+				<div>
+					<label>
+						Start Radius <input id="start_radius" type="range" min="10" max="400" step="1"/>
+					</label>
+				</div>
+
+				<div>
+					<label>
+						Body Elasticity <input id="elasticity" type="range" value="0.3" min="0" max="1" step="0.05"/>
+					</label>
+				</div>
+
+			</div>
+		</div>
+	</div>
+
+	<script type="text/javascript">
+		(function(document, window){	
+			var MINMASS = 1e2; //1e2
+			var MAXMASS = 1e10;
+			var G = 1e-7;
+			var SOFTEN = 10;
+			var GFACTOR = 1.3;
+			
+			var DISTANCE_MULTIPLE = 2;
+			var MAXDEPTH = 8;
+			var THETA = 0.5;
+
+			var RADIUS = 2;
+			var ELASTIC = 0.3;
+			
+			var bodies = [];
+			var root;
+			canvas = document.getElementById('stage');
+			ctx = canvas.getContext("2d");
+			
+			var add_n_random_bodies = function(n, radius){
+				for(var i = 0; i < n; i++){
+					var r1 = Math.random();
+					var r2 = Math.random();
+
+					var x = r2 * radius * Math.cos(2 * Math.PI * r1 / r2);
+					var y = r2 * radius * Math.sin(2 * Math.PI * r1 / r2);
+
+					var rvx = Math.random() < 0.5 ? -1 : 1;
+					var rvy = Math.random() < 0.5 ? -1 : 1;
+
+					bodies.push({
+						px: x + canvas.width / 2,
+						py: y + canvas.height / 2,
+						vx: rvx * 10,
+						vy: rvy * 10,
+						ax: 0,
+						ay: 0,
+						mass: Math.random() * (MAXMASS - MINMASS) + MINMASS 
+					});
+				}
+
+			};
+			
+			var build_bnt = function(){
+				root = {
+					body: [],
+					leaf: true,
+					com: {
+						x: 0,
+						y: 0,
+						mass: 0
+					},
+					nodes: [null, null, null, null],
+					box: {
+						x: 0,
+						y: 0,
+						w: canvas.width,
+						h: canvas.height
+					}
+				};
+				
+				for(var i = 0; i < bodies.length; i++){
+					if(in_bbox(bodies[i].px, bodies[i].py, root.box)){
+						add_body(root, i, 0);	
+					}
+				}
+			};
+			
+			var in_bbox = function(x, y, bbox){
+				return (x >= bbox.x && x <= bbox.w && y >= bbox.y && y <= bbox.h);
+			};
+
+			var add_body = function(node, i, depth){
+				if(node.body.length > 0){
+					if(depth > MAXDEPTH){
+						node.body.push(i);
+					}else{
+						var subBodies;
+						if(!node.leaf){
+							subBodies = [i];
+						}else{
+							subBodies = [node.body, i];							
+						}
+
+						for(var j = 0; j < subBodies.length; j++){
+							var quad = get_quad(subBodies[j], node.box);
+							var child = node.nodes[quad];
+							if(child){
+								add_body(child, subBodies[j], depth+1);
+							}else{
+								node = make_node(node, quad, subBodies[j]);
+							}
+						}
+						
+						node.body = ["PARENT"];
+						node.leaf = false;
+					}
+					
+					node.com.x = (node.com.x * node.com.mass + bodies[i].px * bodies[i].mass) / (node.com.mass + bodies[i].mass);
+					node.com.y = (node.com.y * node.com.mass + bodies[i].py * bodies[i].mass) / (node.com.mass + bodies[i].mass);
+					node.com.mass += bodies[i].mass
+				}else{
+					node.body = [i];
+					node.com = {
+						x: bodies[i].px,
+						y: bodies[i].py,
+						mass: bodies[i].mass
+					}
+				}
+			};
+			
+			function get_quad(i, box){				
+				var mx = (box.x + box.w) / 2;
+				var my = (box.y + box.h) / 2;
+				
+				if(bodies[i].px < mx){
+					if(bodies[i].py < my){
+						return 0;
+					}else{
+						return 2;
+					}
+				}else{
+					if(bodies[i].py < my){
+						return 1;
+					}else{
+						return 3;
+					}
+				}
+			};
+			
+			var make_node = function(parent, quad, child){
+				var child = {
+					body: [child],
+					leaf: true,
+					com: {
+						x: bodies[child].px,
+						y: bodies[child].py,
+						mass: bodies[child].mass
+					},
+					nodes: [null, null, null, null],
+					box: {
+						x: 0,
+						y: 0,
+						w: 0,
+						h: 0
+					}
+				};
+				
+				switch(quad){
+					case 0:
+						child.box = {
+							x: parent.box.x,
+							y: parent.box.y,
+							w: (parent.box.x + parent.box.w) / 2,
+							h: (parent.box.y + parent.box.h) / 2
+						}
+						break;
+					case 1:
+						child.box = {
+							x: (parent.box.x + parent.box.w) / 2,
+							y: parent.box.y,
+							w: parent.box.w,
+							h: (parent.box.y + parent.box.h) / 2
+						}
+						break;
+					case 2:
+						child.box = {
+							x: parent.box.x,
+							y: (parent.box.y + parent.box.h) / 2,
+							w: (parent.box.x + parent.box.w) / 2,
+							h: parent.box.h
+						}
+						break;
+					case 3:
+						child.box = {
+							x: (parent.box.x + parent.box.w) / 2,
+							y: (parent.box.y + parent.box.h) / 2,
+							w: parent.box.w,
+							h: parent.box.h
+						}
+						break;
+				};
+				
+				parent.nodes[quad] = child;
+				return parent;
+			};
+			
+			var do_bnt = function(bi){
+				recurse_bnt(bi, root);
+			};
+			
+			var recurse_bnt = function(bi, node){	
+				if(node.leaf){					
+					for(var i = 0; i < node.body.length; i++){
+						if(bi != node.body[i]){
+							set_acceleration(bi, node.body[i]);
+							detect_collision(bi, node.body[i]);
+						}
+					}
+				}else{
+					var s = Math.min(node.box.w - node.box.x, node.box.h - node.box.y);
+					var d = get_distance(bodies[bi].px ,bodies[bi].py, node.com.x, node.com.y);					
+					if(s/d < THETA){
+						set_acceleration_direct(bi, node.com.mass, node.com.x, node.com.y);
+						for(var i = 0; i < node.body.length; i++){
+							if(bi != node.body[i]){
+								detect_collision(bi, node.body[i]);
+							}
+						}
+						
+					}else{
+						for(var j = 0; j < 4; j++){
+							if(node.nodes[j]){
+								recurse_bnt(bi, node.nodes[j]);
+							}
+						}
+					}
+				}
+			};
+			
+			var get_distance = function(x, y, x2, y2){
+				return Math.sqrt(Math.pow(x2 - x, 2) + Math.pow(y2 - y, 2));
+			}
+			
+			var set_acceleration = function(i, j){
+				var F = get_force_vector(i, j);
+				
+				bodies[i].ax += F.x / bodies[i].mass;
+				bodies[i].ay += F.y / bodies[i].mass;
+				
+				//bodies[j].ax -= F.x / bodies[j].mass;
+				//bodies[j].ay -= F.y / bodies[j].mass;
+			};
+			
+			var set_acceleration_direct = function(i, m, x, y){
+				var F = get_force_vector_direct(bodies[i].mass, bodies[i].px, bodies[i].py, m, x, y);				
+				bodies[i].ax += F.x / bodies[i].mass;
+				bodies[i].ay += F.y / bodies[i].mass;
+			};
+
+			var detect_collision = function(i, j){
+				if(typeof j === 'string') return;
+
+				var x1 = bodies[i].px;
+				var y1 = bodies[i].py;
+
+				var x2 = bodies[j].px;
+				var y2 = bodies[j].py;
+
+				if(get_distance(x1, y1, x2, y2) <= RADIUS){
+					if(document.getElementById('use_collision').checked){
+						collision2Ds(i, j);
+					}
+				}
+			}
+
+			var collision2Ds = function(i, j){
+				if(typeof j === 'string') return;
+
+				var x1 = bodies[i].px;
+				var y1 = bodies[i].py;
+
+				var x2 = bodies[j].px;
+				var y2 = bodies[j].py;
+
+				//var R = ELASTIC; // Between 0 and 1 where 1 is perfectly inelastic
+				var R = document.getElementById('elasticity').value;
+
+				var m = bodies[j].mass / bodies[i].mass;
+				var x = x2 - x1;
+				var y = y2 - y1;
+				var vx = bodies[j].vx - bodies[i].vx;
+				var vy = bodies[j].vy - bodies[i].vy;
+
+				var vx_cm = (bodies[i].mass * bodies[i].vx + bodies[j].mass * bodies[j].vx) / (bodies[i].mass + bodies[j].mass);
+				var vy_cm = (bodies[i].mass * bodies[i].vy + bodies[j].mass * bodies[j].vy) / (bodies[i].mass + bodies[j].mass);
+
+				// Return if not approaching
+				if((vx*x + vy*y) >= 0) return;
+
+				var fy = 1.0e-12 * Math.abs(y);
+				if(Math.abs(x) < fy){
+					if(x < 0){
+						sign = -1;
+					}else{
+						sign = 1;
+					}
+
+					x = fy * sign;
+				}
+
+				// Update Velocities
+				a = y / x;
+				dvx = -2 * (vx + a * vy) / ((1 + a*a) * (1 + m));
+				bodies[j].vx = bodies[j].vx + dvx;
+				bodies[j].vx = bodies[j].vx + a * dvx;
+				bodies[i].vx = bodies[i].vx - m * dvx;
+				bodies[i].vx = bodies[i].vx - a * m * dvx;
+
+				// Correct for inelastic collisions
+				bodies[i].vx = (bodies[i].vx - vx_cm) * R + vx_cm;
+				bodies[i].vy = (bodies[i].vy - vy_cm) * R + vy_cm;
+				bodies[j].vx = (bodies[j].vx - vx_cm) * R + vx_cm;
+				bodies[j].vy = (bodies[j].vy - vy_cm) * R + vy_cm;
+
+				bodies[i].ax = 0;
+				bodies[i].ay = 0;
+				bodies[j].ax = 0;
+				bodies[j].ay = 0;
+			}
+			
+			var get_force_vector = function(i, j){
+				return get_force_vector_direct(bodies[i].mass, bodies[i].px, bodies[i].py, bodies[j].mass, bodies[j].px, bodies[j].py);
+			};
+			
+			var get_force_vector_direct = function(m, x, y, m2, x2, y2){
+				var dx = x2 - x;
+				var dy = y2 - y;
+				var r = (get_distance(x, y, x2, y2) + SOFTEN) * DISTANCE_MULTIPLE;
+				var F = G*m*m2 / Math.pow(r, GFACTOR);
+				
+				return {
+					x: F * dx / r,
+					y: F * dy / r
+				};
+			};
+			
+			var leap_frog = function(){
+				build_bnt();
+				for(var i = 0; i < bodies.length; i++){
+					bodies[i].px += bodies[i].vx * (0.5 * dt);
+					bodies[i].py += bodies[i].vy * (0.5 * dt);
+
+					bodies[i].vx += bodies[i].ax * dt;
+					bodies[i].vy += bodies[i].ay * dt;
+					
+					bodies[i].px += bodies[i].vx * (0.5 * dt);
+					bodies[i].py += bodies[i].vy * (0.5 * dt);
+					
+					bodies[i].ax = 0;
+					bodies[i].ay = 0;
+
+					do_bnt(i);
+				}
+			};
+			
+			var forward_euler = function(){
+				build_bnt();
+				for(var i = 0; i < bodies.length; i++){
+					bodies[i].px += bodies[i].vx * dt;
+					bodies[i].py += bodies[i].vy * dt;
+					
+					bodies[i].vx += bodies[i].ax * dt;
+					bodies[i].vy += bodies[i].ay * dt;
+					
+					bodies[i].ax = 0;
+					bodies[i].ay = 0;
+
+					do_bnt(i);
+				}				
+			};
+			
+			var draw_graphics = function(){
+				ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+				for(var i = 0; i < bodies.length; i++){
+
+					if(document.getElementById('draw_points').checked){
+						ctx.beginPath();
+						ctx.arc(bodies[i].px, bodies[i].py, 1, 0, 2 * Math.PI, false);
+	      				ctx.fillStyle = '#FFFFFF';
+	      				ctx.fill();
+					}else{
+						var z = (bodies[i].mass - MINMASS) / (MAXMASS - MINMASS);
+						var radius = 4 + (z * 4);
+						radius = 4;
+
+						ctx.beginPath();
+						ctx.lineWidth = 1;
+	      				ctx.strokeStyle = bodies[i].color || '#FFFFFF';
+
+	      				ctx.arc(bodies[i].px, bodies[i].py, radius, 0, 2 * Math.PI, false);
+
+	      				var x2 = bodies[i].px + bodies[i].vx / radius;
+	      				var y2 = bodies[i].py + bodies[i].vy / radius;
+
+	      				ctx.moveTo(bodies[i].px, bodies[i].py);
+						ctx.lineTo(x2,  y2);
+						ctx.stroke();
+					}
+				}
+				
+				if(document.getElementById('show_bnt').checked){
+					draw_bnt();	
+				}
+			};
+			
+			var draw_bnt = function(){
+				if(root){
+					draw_node(root, 0);
+				}
+			};
+			
+			var draw_node = function(node, depth){
+				if(typeof(node) != 'undefined' && depth <= 8){
+					ctx.strokeStyle = '#555';
+					ctx.lineWidth = "1";
+					ctx.strokeRect(node.box.x, node.box.y, node.box.w-node.box.x, node.box.h-node.box.y);
+					
+					for(var i = 0; i < 4; i++){
+						var child = node.nodes[i];
+						if(child){
+							draw_node(child, depth+1);
+						}
+					}
+				}
+			};
+						
+			// Basic update system step by time step dt
+			var dt = 0.01;
+			var sysTimer, gfxTimer;
+			
+			var step = function() {
+				//forward_euler();
+				leap_frog();
+			}
+			
+			var startSys = function() {
+				sysTimer = setInterval(step, 10);
+				gfxTimer = setInterval(draw_graphics, 1/60.0*1000);
+				draw_graphics();
+			};
+
+			var pauseSys = function(){
+				clearInterval(sysTimer);
+				clearInterval(gfxTimer);
+			}
+
+			var resetSys = function(){
+				clearInterval(sysTimer);
+				clearInterval(gfxTimer);
+				bodies = [];
+			};
+
+			document.getElementById('pause_bnt').addEventListener('change', function(el){
+				if(el.target.checked){
+					pauseSys();
+				}else{
+					startSys();
+				}
+			});
+
+			document.getElementById('start_bnt').addEventListener('click', function(el){
+				var num_bodies = document.getElementById('num_bodies').value || 100;
+				var start_radius = document.getElementById('start_radius').value || 250;
+
+				resetSys();
+				add_n_random_bodies(num_bodies, start_radius);
+				startSys();
+
+			});
+			
+		})(document, window)
+	</script>
+</body>
+</html>
